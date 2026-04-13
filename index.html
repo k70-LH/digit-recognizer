@@ -2,67 +2,49 @@
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
-    <title>手写数字识别（CNN模型）</title>
+    <title>手写数字识别</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: Arial, sans-serif;
-        }
         body {
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 30px;
             background: #f5f5f5;
+            font-family: Arial, sans-serif;
+            padding: 20px;
         }
-        h1 {
-            margin-bottom: 20px;
-            color: #333;
-        }
-        #canvas {
-            border: 3px solid #2c3e50;
-            border-radius: 8px;
+        canvas {
+            border: 3px solid #333;
             background: white;
             cursor: crosshair;
         }
         .btn-group {
-            margin: 20px 0;
+            margin: 15px 0;
             display: flex;
             gap: 10px;
         }
         button {
-            padding: 10px 20px;
-            font-size: 16px;
+            padding: 8px 16px;
+            font-size: 14px;
             border: none;
-            border-radius: 6px;
-            background: #3498db;
+            border-radius: 5px;
             color: white;
             cursor: pointer;
-            transition: 0.2s;
         }
-        button:hover {
-            background: #2980b9;
-        }
-        #clear { background: #e74c3c; }
-        #clear:hover { background: #c0392b; }
         #undo { background: #f39c12; }
-        #undo:hover { background: #d35400; }
         #redo { background: #1abc9c; }
-        #redo:hover { background: #16a085; }
-        #predict { background: #9b59b6; font-weight: bold; }
-        #predict:hover { background: #8e44ad; }
+        #clear { background: #e74c3c; }
+        #predict { background: #3498db; }
         #result {
-            font-size: 28px;
+            font-size: 24px;
             font-weight: bold;
-            color: #e74c3c;
+            color: #2c3e50;
             margin-top: 10px;
         }
     </style>
 </head>
 <body>
-    <h1>✍️ 手写数字识别（CNN模型）</h1>
+    <h1>✍️ 手写数字识别</h1>
     <canvas id="canvas" width="280" height="280"></canvas>
     <div class="btn-group">
         <button id="undo">撤销 ↶</button>
@@ -70,24 +52,24 @@
         <button id="clear">清空 🗑️</button>
         <button id="predict">开始识别 🔍</button>
     </div>
-    <div id="result">识别结果：等待书写...</div>
+    <div id="result">识别结果：请书写后点击识别</div>
 
     <script>
         const canvas = document.getElementById('canvas');
         const ctx = canvas.getContext('2d');
         const resultDiv = document.getElementById('result');
         
-        // 画笔设置（匹配MNIST手写风格）
+        // 初始化画布
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.strokeStyle = '#000000';
         ctx.lineWidth = 15;
         ctx.lineCap = 'round';
-        ctx.strokeStyle = '#000000';
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height); // 初始化白色背景
-        
-        // 撤销/重做栈
+
         let history = [];
         let redoStack = [];
         let isDrawing = false;
+        let model = null;
 
         // 保存画布状态
         function saveState() {
@@ -96,7 +78,7 @@
         }
         saveState();
 
-        // 鼠标绘图
+        // 鼠标事件
         canvas.addEventListener('mousedown', (e) => {
             isDrawing = true;
             const rect = canvas.getBoundingClientRect();
@@ -115,9 +97,10 @@
             isDrawing = false;
             saveState();
         });
+
         canvas.addEventListener('mouseout', () => isDrawing = false);
 
-        // 撤销
+        // 撤销/重做
         document.getElementById('undo').addEventListener('click', () => {
             if (history.length > 1) {
                 redoStack.push(history.pop());
@@ -130,7 +113,6 @@
             }
         });
 
-        // 重做
         document.getElementById('redo').addEventListener('click', () => {
             if (redoStack.length > 0) {
                 const img = new Image();
@@ -143,58 +125,67 @@
             }
         });
 
-        // 清空
         document.getElementById('clear').addEventListener('click', () => {
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillRect(0, 0, canvas.width, canvas.height); // 重置白色背景
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
             saveState();
-            resultDiv.textContent = '识别结果：等待书写...';
+            resultDiv.textContent = '识别结果：请书写后点击识别';
         });
 
-        // 识别（核心修复：完全匹配MNIST数据格式）
+        // 加载模型 (这一行是关键，正确加载预训练模型)
+        async function loadModel() {
+            try {
+                model = await tf.loadLayersModel('https://storage.googleapis.com/tfjs-models/tfjs/mnist_transfer_cnn_v1/model.json');
+                resultDiv.textContent = '模型加载完成，请书写数字';
+            } catch (err) {
+                resultDiv.textContent = '模型加载失败';
+                console.error(err);
+            }
+        }
+        loadModel();
+
+        // 识别函数
         document.getElementById('predict').addEventListener('click', async () => {
+            if (!model) {
+                resultDiv.textContent = '模型未加载，请刷新重试';
+                return;
+            }
+
             resultDiv.textContent = '识别中...';
-            
-            // 1. 创建28x28画布，先填充白色背景（匹配MNIST）
+
+            // 1. 创建小画布用于缩放
             const smallCanvas = document.createElement('canvas');
             smallCanvas.width = 28;
             smallCanvas.height = 28;
             const smallCtx = smallCanvas.getContext('2d');
+            
+            // 2. 抗锯齿缩放
             smallCtx.fillStyle = '#ffffff';
             smallCtx.fillRect(0, 0, 28, 28);
-            
-            // 2. 等比例缩放绘制手写数字，居中显示（避免变形）
-            const scale = Math.min(28 / canvas.width, 28 / canvas.height);
-            const x = (28 - canvas.width * scale) / 2;
-            const y = (28 - canvas.height * scale) / 2;
-            smallCtx.drawImage(canvas, x, y, canvas.width * scale, canvas.height * scale);
-            
-            // 3. 获取像素数据，严格按照MNIST格式预处理
+            smallCtx.drawImage(canvas, 0, 0, 280, 280, 0, 0, 28, 28);
+
+            // 3. 预处理图片 (灰度图，归一化)
             const imgData = smallCtx.getImageData(0, 0, 28, 28);
             const pixels = [];
             for (let i = 0; i < imgData.data.length; i += 4) {
-                // 转灰度：0-255，MNIST是黑字白底，需要反转成白字黑底（255-灰度）
-                const r = imgData.data[i];
-                const g = imgData.data[i+1];
-                const b = imgData.data[i+2];
-                const gray = 0.2989 * r + 0.5870 * g + 0.1140 * b; // 标准灰度转换公式
-                const inverted = 255 - gray; // 反转颜色，匹配MNIST训练数据
-                pixels.push(inverted / 255.0); // 归一化到0-1
+                // RGB 转灰度
+                const gray = 0.2989 * imgData.data[i] + 0.5870 * imgData.data[i+1] + 0.1140 * imgData.data[i+2];
+                pixels.push(255 - gray); // 反色 (MNIST是白底黑字，我们是黑底白字)
             }
-            
-            // 4. 发送给后端
-            try {
-                const res = await fetch('/predict', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ image: pixels })
-                });
-                const data = await res.json();
-                resultDiv.textContent = `识别结果：${data.digit} (置信度：${(data.confidence*100).toFixed(2)}%)`;
-            } catch (err) {
-                resultDiv.textContent = '识别失败，请检查后端服务！';
-                console.error('识别错误:', err);
-            }
+
+            // 4. 转换为 Tensor 并预测
+            const tensor = tf.tensor4d(pixels, [1, 28, 28, 1]).div(255.0);
+            const prediction = model.predict(tensor);
+            const digit = prediction.argMax(1).dataSync()[0];
+            const confidence = prediction.max().dataSync()[0];
+
+            // 5. 显示结果
+            resultDiv.textContent = `识别结果：${digit} (置信度：${(confidence * 100).toFixed(1)}%)`;
+
+            // 释放内存
+            tensor.dispose();
+            prediction.dispose();
         });
     </script>
 </body>
